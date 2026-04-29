@@ -28,9 +28,19 @@ HTML = """
     <pre id="result"></pre>
 
 <script>
+function log(message) {
+    const result = document.getElementById("result");
+    const timestamp = new Date().toLocaleTimeString();
+    result.textContent += `[${timestamp}] ${message}\n`;
+}
+
 async function submitCalculation() {
     const result = document.getElementById("result");
-    result.textContent = "Running attestation...";
+    result.textContent = "";
+
+    log("Submit clicked");
+    log("Round-trip 1 starting: requesting attestation from backend");
+    log("No numbers have been sent yet");
 
     const attestResponse = await fetch("/attest", {
         method: "POST"
@@ -38,12 +48,23 @@ async function submitCalculation() {
 
     const attestData = await attestResponse.json();
 
+    log("Attestation response received from backend");
+    log("HTTP status: " + attestResponse.status);
+    log("Backend message: " + attestData.message);
+
+    if (attestData.details) {
+        log("AttestationClient output:");
+        log(attestData.details);
+    }
+
     if (!attestResponse.ok) {
-        result.textContent = "Attestation failed: " + attestData.message;
+        log("STOP: Attestation failed. Numbers will NOT be sent.");
         return;
     }
 
-    result.textContent = "Attestation succeeded. Sending numbers...";
+    log("Attestation succeeded");
+    log("Temporary attestation token received");
+    log("Round-trip 2 starting: sending numbers for calculation");
 
     const multiplyResponse = await fetch("/multiply", {
         method: "POST",
@@ -59,12 +80,16 @@ async function submitCalculation() {
 
     const multiplyData = await multiplyResponse.json();
 
+    log("Calculation response received from backend");
+    log("HTTP status: " + multiplyResponse.status);
+
     if (!multiplyResponse.ok) {
-        result.textContent = "Calculation denied: " + multiplyData.message;
+        log("Calculation denied: " + multiplyData.message);
         return;
     }
 
-    result.textContent = "Result: " + multiplyData.result;
+    log("Calculation allowed");
+    log("Result: " + multiplyData.result);
 }
 </script>
 </body>
@@ -141,7 +166,8 @@ def attest():
         return jsonify({
             "status": "success",
             "message": "CVM attestation succeeded.",
-            "attestationToken": token
+            "attestationToken": token,
+            "details": output[-2000:]
         })
 
     except subprocess.TimeoutExpired:
