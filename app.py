@@ -25,13 +25,13 @@ HTML = """
     <input id="b" type="number" placeholder="Second number">
     <button onclick="submitCalculation()">Submit</button>
 
-    <pre id="result"></pre>
+    <pre id="result" style="border:1px solid #ccc; padding:10px; white-space:pre-wrap;"></pre>
 
 <script>
 function log(message) {
     const result = document.getElementById("result");
     const timestamp = new Date().toLocaleTimeString();
-    result.textContent += `[${timestamp}] ${message}\n`;
+    result.textContent += `[${timestamp}] ${message}\\n`;
 }
 
 async function submitCalculation() {
@@ -42,54 +42,62 @@ async function submitCalculation() {
     log("Round-trip 1 starting: requesting attestation from backend");
     log("No numbers have been sent yet");
 
-    const attestResponse = await fetch("/attest", {
-        method: "POST"
-    });
+    try {
+        const attestResponse = await fetch("/attest", {
+            method: "POST"
+        });
 
-    const attestData = await attestResponse.json();
+        const attestData = await attestResponse.json();
 
-    log("Attestation response received from backend");
-    log("HTTP status: " + attestResponse.status);
-    log("Backend message: " + attestData.message);
+        log("Attestation response received from backend");
+        log("HTTP status: " + attestResponse.status);
+        log("Backend message: " + attestData.message);
 
-    if (attestData.details) {
-        log("AttestationClient output:");
-        log(attestData.details);
+        if (attestData.details) {
+            log("");
+            log("AttestationClient output:");
+            log(attestData.details);
+        }
+
+        if (!attestResponse.ok) {
+            log("");
+            log("STOP: Attestation failed. Numbers will NOT be sent.");
+            return;
+        }
+
+        log("");
+        log("Attestation succeeded");
+        log("Temporary attestation token received");
+        log("Round-trip 2 starting: sending numbers for calculation");
+
+        const multiplyResponse = await fetch("/multiply", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                a: document.getElementById("a").value,
+                b: document.getElementById("b").value,
+                attestationToken: attestData.attestationToken
+            })
+        });
+
+        const multiplyData = await multiplyResponse.json();
+
+        log("Calculation response received from backend");
+        log("HTTP status: " + multiplyResponse.status);
+
+        if (!multiplyResponse.ok) {
+            log("Calculation denied: " + multiplyData.message);
+            return;
+        }
+
+        log("Calculation allowed");
+        log("Result: " + multiplyData.result);
+
+    } catch (err) {
+        log("Browser/client error: " + err);
     }
-
-    if (!attestResponse.ok) {
-        log("STOP: Attestation failed. Numbers will NOT be sent.");
-        return;
-    }
-
-    log("Attestation succeeded");
-    log("Temporary attestation token received");
-    log("Round-trip 2 starting: sending numbers for calculation");
-
-    const multiplyResponse = await fetch("/multiply", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            a: document.getElementById("a").value,
-            b: document.getElementById("b").value,
-            attestationToken: attestData.attestationToken
-        })
-    });
-
-    const multiplyData = await multiplyResponse.json();
-
-    log("Calculation response received from backend");
-    log("HTTP status: " + multiplyResponse.status);
-
-    if (!multiplyResponse.ok) {
-        log("Calculation denied: " + multiplyData.message);
-        return;
-    }
-
-    log("Calculation allowed");
-    log("Result: " + multiplyData.result);
 }
 </script>
 </body>
@@ -107,9 +115,11 @@ def attest():
 
     if not ATTESTATION_URI:
         print("[ATTEST] ERROR: ATTESTATION_URI is not configured")
+        print("==================================================\n")
         return jsonify({
             "status": "failed",
-            "message": "ATTESTATION_URI environment variable is not configured."
+            "message": "ATTESTATION_URI environment variable is not configured.",
+            "details": "Set it before starting the app, for example: export ATTESTATION_URI='https://YOUR-PROVIDER.REGION.attest.azure.net'"
         }), 500
 
     print(f"[ATTEST] Using attestation endpoint: {ATTESTATION_URI}")
@@ -148,11 +158,10 @@ def attest():
         if result.returncode != 0:
             print("[ATTEST] FAILED: AttestationClient returned non-zero exit code")
             print("==================================================\n")
-
             return jsonify({
                 "status": "failed",
                 "message": "AttestationClient returned an error.",
-                "details": output[-1000:]
+                "details": output[-4000:]
             }), 403
 
         print("[ATTEST] SUCCESS: CVM attestation completed successfully")
@@ -160,32 +169,32 @@ def attest():
         token = secrets.token_urlsafe(32)
         TOKENS[token] = time.time() + TOKEN_TTL_SECONDS
 
-        print(f"[ATTEST] Temporary token created (valid {TOKEN_TTL_SECONDS}s)")
+        print(f"[ATTEST] Temporary token created, valid for {TOKEN_TTL_SECONDS} seconds")
         print("==================================================\n")
 
         return jsonify({
             "status": "success",
             "message": "CVM attestation succeeded.",
             "attestationToken": token,
-            "details": output[-2000:]
+            "details": output[-4000:]
         })
 
     except subprocess.TimeoutExpired:
         print("[ATTEST] FAILED: Attestation timed out")
         print("==================================================\n")
-
         return jsonify({
             "status": "failed",
-            "message": "Attestation timed out."
+            "message": "Attestation timed out.",
+            "details": "The AttestationClient command did not complete within 60 seconds."
         }), 504
 
     except Exception as e:
         print(f"[ATTEST] FAILED: Exception occurred: {str(e)}")
         print("==================================================\n")
-
         return jsonify({
             "status": "failed",
-            "message": f"Attestation execution failed: {str(e)}"
+            "message": f"Attestation execution failed: {str(e)}",
+            "details": str(e)
         }), 500
 
 @app.route("/multiply", methods=["POST"])
