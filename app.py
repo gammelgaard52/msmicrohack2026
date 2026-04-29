@@ -77,20 +77,32 @@ def index():
 
 @app.route("/attest", methods=["POST"])
 def attest():
+    print("\n==================================================")
+    print("[ATTEST] New attestation request received")
+
     if not ATTESTATION_URI:
+        print("[ATTEST] ERROR: ATTESTATION_URI is not configured")
         return jsonify({
             "status": "failed",
             "message": "ATTESTATION_URI environment variable is not configured."
         }), 500
 
+    print(f"[ATTEST] Using attestation endpoint: {ATTESTATION_URI}")
+    print(f"[ATTEST] Executing binary: {ATTESTATION_BINARY}")
+
     try:
+        command = [
+            "sudo",
+            ATTESTATION_BINARY,
+            "-a",
+            ATTESTATION_URI
+        ]
+
+        print(f"[ATTEST] Running command: {' '.join(command)}")
+        print("[ATTEST] Starting attestation now...")
+
         result = subprocess.run(
-            [
-                "sudo",
-                ATTESTATION_BINARY,
-                "-a",
-                ATTESTATION_URI
-            ],
+            command,
             capture_output=True,
             text=True,
             timeout=60
@@ -98,15 +110,33 @@ def attest():
 
         output = result.stdout + result.stderr
 
+        print(f"[ATTEST] Return code: {result.returncode}")
+
+        if result.stdout:
+            print("\n[ATTEST] STDOUT:")
+            print(result.stdout[-2000:])
+
+        if result.stderr:
+            print("\n[ATTEST] STDERR:")
+            print(result.stderr[-2000:])
+
         if result.returncode != 0:
+            print("[ATTEST] FAILED: AttestationClient returned non-zero exit code")
+            print("==================================================\n")
+
             return jsonify({
                 "status": "failed",
                 "message": "AttestationClient returned an error.",
                 "details": output[-1000:]
             }), 403
 
+        print("[ATTEST] SUCCESS: CVM attestation completed successfully")
+
         token = secrets.token_urlsafe(32)
         TOKENS[token] = time.time() + TOKEN_TTL_SECONDS
+
+        print(f"[ATTEST] Temporary token created (valid {TOKEN_TTL_SECONDS}s)")
+        print("==================================================\n")
 
         return jsonify({
             "status": "success",
@@ -115,12 +145,18 @@ def attest():
         })
 
     except subprocess.TimeoutExpired:
+        print("[ATTEST] FAILED: Attestation timed out")
+        print("==================================================\n")
+
         return jsonify({
             "status": "failed",
             "message": "Attestation timed out."
         }), 504
 
     except Exception as e:
+        print(f"[ATTEST] FAILED: Exception occurred: {str(e)}")
+        print("==================================================\n")
+
         return jsonify({
             "status": "failed",
             "message": f"Attestation execution failed: {str(e)}"
